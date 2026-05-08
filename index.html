@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>Monochrome Records</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+
+body {
+
+  margin:0;
+
+  background:#0a0a0a;
+
+  color:#fff;
+
+  font-family:sans-serif;
+
+}
+
+/* フィルター */
+
+.filter-bar {
+
+  padding:20px 40px 0;
+
+}
+
+.filter-bar span {
+
+  margin-right:10px;
+
+  font-size:12px;
+
+  opacity:0.6;
+
+  cursor:pointer;
+
+}
+
+.filter-bar span.active {
+
+  opacity:1;
+
+  border-bottom:1px solid #fff;
+
+}
+
+/* グリッド */
+
+.grid {
+
+  display:grid;
+
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+
+  gap:24px;
+
+  padding:40px;
+
+}
+
+.item img {
+
+  width:100%;
+
+  aspect-ratio:1/1;
+
+  object-fit:cover;
+
+  filter:grayscale(100%);
+
+  transition:.4s;
+
+}
+
+.item:hover img {
+
+  filter:grayscale(60%);
+
+  transform:scale(1.05);
+
+}
+
+.hidden{display:none}
+
+/* モーダル */
+
+.modal {
+
+  position:fixed;
+
+  inset:0;
+
+  background:rgba(0,0,0,0.8);
+
+  display:flex;
+
+  align-items:center;
+
+  justify-content:center;
+
+  opacity:0;
+
+  pointer-events:none;
+
+  transition:.3s;
+
+}
+
+.modal.active{
+
+  opacity:1;
+
+  pointer-events:auto;
+
+}
+
+.panel{
+
+  background:#111;
+
+  padding:20px;
+
+  width:320px;
+
+  border-radius:6px;
+
+  transform:scale(.95);
+
+}
+
+.modal.active .panel{
+
+  transform:scale(1);
+
+}
+
+/* 画像追加 */
+
+.modal img{
+
+  width:100%;
+
+  margin-bottom:12px;
+
+  filter:grayscale(100%);
+
+}
+
+.title{font-weight:bold;}
+
+.artist{font-size:13px;opacity:.7;margin-bottom:10px;}
+
+.tags span{font-size:12px;margin-right:6px;opacity:.6;}
+
+.mood{margin-top:10px;font-size:13px;}
+
+.amazon{
+  display:block;
+  margin-top:15px;
+  padding:10px;
+  background:#fff;
+  color:#000;
+  text-align:center;
+  text-decoration:none;
+  font-size:12px;
+}
+
+.spotify {
+  display:block;
+  margin-top:10px;
+  padding:10px;
+  background:#1db954;
+  color:#fff;
+  text-align:center;
+  text-decoration:none;
+  font-size:12px;
+  border-radius:4px;
+}
+
+.spotify:hover {
+  opacity:0.85;
+}
+
+/* ボタン */
+
+.topbar{
+
+  padding:10px 40px;
+
+  display:flex;
+
+  gap:10px;
+
+}
+
+button{
+
+  background:#222;
+
+  color:#fff;
+
+  border:none;
+
+  padding:6px 10px;
+
+  font-size:12px;
+
+  cursor:pointer;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="topbar">
+
+  <button onclick="shuffle()">shuffle</button>
+
+  <button onclick="share()">share</button>
+
+</div>
+
+<div class="filter-bar" id="filters"></div>
+
+<div class="grid" id="grid"></div>
+
+<div class="modal" id="modal">
+
+  <div class="panel">
+
+    <img id="m-img">
+
+    <div class="title" id="m-title"></div>
+
+    <div class="artist" id="m-artist"></div>
+
+    <div class="tags" id="m-tags"></div>
+
+    <div class="mood" id="m-mood"></div>
+
+    <a id="m-spotify" class="spotify" target="_blank">Spotifyで聴く</a>
+
+    <a id="m-amazon" class="amazon" target="_blank">Amazonで見る</a>
+
+  </div>
+
+</div>
+
+<script>
+const NOTION_TOKEN = "SECRET";
+const DATABASE_ID = "35702dc69de180abb085f31a0579e33e";
+
+async function fetchNotion() {
+  const res = await fetch(`https://api.notion.com/v1/databases/${DATABASE_ID}/query`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${NOTION_TOKEN}`,
+      "Notion-Version": "2022-06-28",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      filter: {
+        property: "Status",
+        select: { equals: "Published" }
+      }
+    })
+  });
+
+  const data = await res.json();
+
+  return data.results.map(p => ({
+    title: p.properties.Title.title[0]?.plain_text || "",
+    artist: p.properties.Artist.rich_text[0]?.plain_text || "",
+    img: p.properties.Image.url,
+    tags: p.properties.Tags.multi_select.map(t=>t.name),
+    mood: p.properties.Mood.rich_text[0]?.plain_text || "",
+    spotify: p.properties.Spotify.url,
+    amazon: p.properties.Amazon.url
+  }));
+}
+</script>
+
+
+<script>
+
+
+let albums = [];
+
+fetchNotion().then(data => {
+  albums = data;
+  current = pick16(albums);
+  render(current);
+  setupFilters();
+});
+
+// ===== データ =====
+
+
+
+// ===== URL seed =====
+
+const params=new URLSearchParams(location.search);
+
+let seed=params.get("seed")||Date.now();
+
+// 疑似ランダム
+
+function random(){
+
+  seed=(seed*9301+49297)%233280;
+
+  return seed/233280;
+
+}
+
+// シャッフル
+
+function pick16(list){
+
+  return [...list].sort(()=>random()-0.5).slice(0,16);
+
+}
+
+// 描画
+
+let current=pick16(albums);
+
+render(current);
+
+function render(list){
+
+  const grid=document.getElementById("grid");
+
+  grid.innerHTML="";
+
+  list.forEach(a=>{
+
+    const div=document.createElement("div");
+
+    div.className="item";
+
+    div.dataset.tags=a.tags.join(" ");
+
+    div.innerHTML=`<img src="${a.img}">`;
+
+    div.onclick=()=>openModal(a);
+
+    grid.appendChild(div);
+
+  });
+
+}
+
+// フィルター
+
+
+// モーダル
+
+const modal=document.getElementById("modal");
+
+function openModal(a){
+
+  document.getElementById("m-img").src=a.img;
+
+  document.getElementById("m-title").textContent=a.title;
+
+  document.getElementById("m-artist").textContent=a.artist;
+
+  document.getElementById("m-tags").innerHTML=a.tags.map(t=>`<span>#${t}</span>`).join("");
+
+  document.getElementById("m-mood").textContent=a.mood;
+
+  document.getElementById("m-spotify").href=a.spotify||"#";
+
+  document.getElementById("m-amazon").href=a.amazon||"#";
+
+  modal.classList.add("active");
+
+}
+
+modal.onclick=()=>modal.classList.remove("active");
+
+// shuffleボタン
+
+function shuffle(){
+
+  seed=Date.now();
+
+  history.replaceState(null,"","?seed="+seed);
+
+  current=pick16(albums);
+
+  render(current);
+
+}
+
+// share
+
+function share(){
+
+  navigator.clipboard.writeText(location.href);
+
+  alert("URL copied");
+
+}
+
+
+// add
+
+function setupFilters() {
+
+  const filters = document.getElementById("filters");
+
+  filters.innerHTML = "";
+
+  const allTags = [...new Set(albums.flatMap(a => a.tags))];
+
+  allTags.forEach(tag => {
+
+    const el = document.createElement("span");
+
+    el.textContent = "#" + tag;
+
+    el.onclick = () => {
+
+      document
+        .querySelectorAll(".filter-bar span")
+        .forEach(s => s.classList.remove("active"));
+
+      el.classList.add("active");
+
+      document.querySelectorAll(".item").forEach(item => {
+
+        item.classList.toggle(
+          "hidden",
+          !item.dataset.tags.includes(tag)
+        );
+
+      });
+
+    };
+
+    filters.appendChild(el);
+
+  });
+
+}
+
+
+</script>
+
+</body>
+
+</html>
